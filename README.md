@@ -4,22 +4,19 @@
 
 This git depot will teach you how to make my Arch Linux UEFI setup that features encryption, Secure Boot, btrfs and AppArmor.
 
-![The installed KDE Plasma setup](plasma.webp)
-
 ## Synopsis
 
 Here is a step by step guide to replicate my Arch Linux setup that includes the instructions to setup:
 - A LUKS partition on top of LVM on top of a btrfs partition with two subvolumes.
 - An encrypted SWAP partition.
 - Secure Boot using sbupdate to prevent the evil maid attack.
-- Flatpak for most applications.
 - AppArmor on top of Firejail.
 - USBGuard to prevent unauthorized USB devices to be plugged on the system.
 - Optionally a way to automate decryption using a TPM.
 
 *Note:* most of the informations in this guide were pulled from [this gist](https://gist.github.com/huntrar/e42aee630bee3295b2c671d098c81268), [this Medium post](https://medium.com/@pawitp/full-disk-encryption-on-arch-linux-backed-by-tpm-2-0-c0892cab9704), [this reddit post](https://www.reddit.com/r/archlinux/comments/7np36m/detached_luks_header_full_disk_encryption_with/) and from the [Arch Linux Wiki](https://wiki.archlinux.org).
 
-*Note2:* all the works made on this repo are licensed under the GPLv3, however, the wallpaper shown in the `plasma.webp` image, the `angeldust.webp` image and the three wallpapers in the `wallpapers` folder belong to their respective owners, I do not own or claim ownership of those said images.
+*Note2:* all the works made on this repo are licensed under the GPLv3.
 
 *Note3*: I tried to gather as much useful informations as possible to insert them all in this guide, I verified and tested all these steps myself on a VM and my own PC.  
 If you spotted an error or if you have any recommendation to make, please open an issue, I'll be glad to take a look.
@@ -66,23 +63,15 @@ If you spotted an error or if you have any recommendation to make, please open a
 
 5. [On the now working setup](#5-on-the-now-working-setup)
 
-	a. [Flatpak](#a-flatpak)
+	a. [USBGuard](#b-usbguard)
 
-	b. [USBGuard](#b-usbguard)
+	b. [Firejail and AppArmor](#c-firejail-and-apparmor)
 
-	c. [Firejail and AppArmor](#c-firejail-and-apparmor)
+	c. [(optional) Set the keyboard layout for x11](#d-optional-set-the-keyboard-layout-for-x11)
 
-	d. [(optional) Set the keyboard layout for x11](#d-optional-set-the-keyboard-layout-for-x11)
+	d. [Make sure that the system is syncing to NTP servers](#h-make-sure-that-the-system-is-syncing-to-ntp-servers)
 
-	e. [(optional) Enable the numlock at boot for SDDM](#e-optional-enable-the-numlock-at-boot-for-sddm)
-
-	f. [(optional) KDE Plasma customization](#f-optional-kde-plasma-customization)
-
-	g. [(optional) Fix KDE Plasma refresh rate with a 144 Hz screen](#g-optional-fix-kde-plasma-refresh-rate-with-a-144-hz-screen)
-
-	h. [Make sure that the system is syncing to NTP servers](#h-make-sure-that-the-system-is-syncing-to-ntp-servers)
-
-	i. [(optional) Install libvirt](#i-optional-install-libvirt)
+	e. [(optional) Install libvirt](#i-optional-install-libvirt)
 
 6. [Enroll the keys in the BIOS](#6-enroll-the-keys-in-the-bios)
 
@@ -192,7 +181,7 @@ w (write the changes to the disk)
 y (confirm the changes)
 ```
 *Note:* if gdisk ask you about an "invalid MBR" or "corrupt GPT", press `2`.  
-*Note2:* from this point, we'll assume that `/dev/sda` is our disk, make the appropriate changes from the commands below if needed.
+*Note2:* from this point, we'll assume that `/dev/nvme0n1p` is our disk, make the appropriate changes from the commands below if needed.
 
 ### c. Create the LUKS2 partition
 In this setup, I will use `aes-xts-plain64` (AES-512) as the cipher, sha512 as the hash function, 5000 as the chosen iteration time (higher than the cryptsetup default) and argon2id as the key derivation function.  
@@ -200,13 +189,13 @@ Please make your own opinion about those settings, I am not here to talk about c
 
 The final command should look like this:
 ```
-cryptsetup luksFormat -c aes-xts-plain64 -h sha512 -S 1 -s 512 -i 5000 --use-random --type luks2 --pbkdf argon2id /dev/sda2
+cryptsetup luksFormat -c aes-xts-plain64 -h sha512 -S 1 -s 512 -i 5000 --use-random --type luks2 --pbkdf argon2id /dev/nvme0n1p2
 ```
 *Note:* if you wanna go overkill, change the iteration time from 5000 to 30000.
 
 We are now able to open the LUKS partition using:
 ```
-cryptsetup open --allow-discards /dev/sda2 cryptlvm
+cryptsetup open --allow-discards /dev/nvme0n1p2 cryptlvm
 ```
 *Note:* in this guide, the LUKS partition will be referenced as `cryptlvm`.  
 *Note2:* remove the `--allow-discards` option if you are not using an SSD or if you do not wish to use TRIM for "security reasons".
@@ -241,7 +230,7 @@ This one doesn't even need any explanation:
 ```
 mkfs.btrfs /dev/vg/root
 mkswap /dev/vg/swap
-mkfs.fat -F32 /dev/sda1
+mkfs.fat -F32 /dev/nvme0n1p1
 ```
 
 ### g. And mount them
@@ -290,7 +279,7 @@ chmod 700 /mnt/btrfs_pool
 
 Mount the ESP:
 ```
-mount /dev/sda1 /mnt/efi
+mount /dev/nvme0n1p1 /mnt/efi
 ```
 And also activate the SWAP:
 ```
@@ -377,7 +366,7 @@ MODULES=(crc32c / crc32c-intel)
 
 For the hooks, **the order matter**, it should be as follow:
 ```
-HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems resume fsck)
+HOOKS=(base systemd autodetect keyboard sd-vconsole modconf block sd-encrypt lvm2 filesystems resume fsck)
 ```
 *Note:* if you do not wish to use the hibernation feature, remove the `resume` hook.  
 *Note2:* if you are only using the QWERTY keyboard layout, you can not include the `keymap` hook.
@@ -501,7 +490,7 @@ $ exit
 
 Add the boot options in `sbupdate.conf`, this command will automatically fetch the UUID of the LVM partition, add the boot flags for AppArmor and set the kernel loglevel to 3.
 ```
-sed -i 's/#CMDLINE_DEFAULT=""/CMDLINE_DEFAULT="cryptdevice=UUID='"$(blkid -s UUID -o value /dev/sda2)"':cryptlvm:allow-discards root=\/dev\/vg\/root resume=\/dev\/vg\/swap rootflags=subvol=@ rw loglevel=3 rd.udev.log_priority=3 rd.systemd.show_status=false systemd.show_status=false quiet splash apparmor=1 lsm=lockdown,yama,apparmor"/g' /etc/sbupdate.conf
+sed -i 's/#CMDLINE_DEFAULT=""/CMDLINE_DEFAULT="rd.luks.name='"$(blkid -s UUID -o value /dev/nvme0n1p2)"'=cryptlvm root=\/dev\/vg\/root resume=\/dev\/vg\/swap rootflags=subvol=@ rw rd.luks.options=allow-discards loglevel=3 rd.udev.log_priority=3 rd.systemd.show_status=false systemd.show_status=false quiet splash apparmor=1 lsm=lockdown,yama,apparmor"/g' /etc/sbupdate.conf
 ```
 *Note:* if you are using an HDD or if you do not wish to use TRIM for "security reasons", remove the `allow-discards` option.  
 *Note2:* if you do not wish to use the hibernation feature, remove the `resume` option.  
@@ -568,23 +557,15 @@ chmod 700 /boot
 
 Install all the packages I want for my setup:
 ```
-pacman -S plasma plasma-wayland-session kwalletmanager spectacle flatpak nautilus xdg-user-dirs xsettingsd firefox firefox-i18n-fr virtualbox packagekit-qt5 konsole gnome-disk-utility gnome-keyring pavucontrol adapta-gtk-theme materia-gtk-theme papirus-icon-theme xcursor-vanilla-dmz noto-fonts-emoji ttf-dejavu ttf-liberation ttf-droid ttf-ubuntu-font-family noto-fonts networkmanager usbguard firejail apparmor htop bpytop dnscrypt-proxy syncthing jre8-openjdk jre-openjdk ldns gvfs-mtp gocryptfs compsize whois openbsd-netcat net-tools usbutils dnsmasq libcups cups ghostscript avahi xsane earlyoom iw ncdu partitionmanager wireguard-tools bluez
+pacman -S spectacle nautilus xdg-user-dirs xsettingsd virtualbox packagekit-qt5 gnome-disk-utility gnome-keyring pavucontrol papirus-icon-theme noto-fonts-emoji ttf-dejavu ttf-liberation ttf-droid ttf-ubuntu-font-family noto-fonts networkmanager usbguard firejail apparmor ldns gvfs-mtp gocryptfs compsize whois openbsd-netcat net-tools usbutils dnsmasq libcups cups ghostscript avahi xsane earlyoom iw ncdu partitionmanager wireguard-tools bluez
 ```
 It include:
-- KDE Plasma
-- The Plasma Wayland session package so a Wayland session under Plasma may be started
-- Firefox and the French language package
 - Firejail, AppArmor and USBGuard
 - Flatpak
 - VirtualBox
-- The Adapta theme, the Materia theme, the Papirus icon pack and the dmz cursor
-- A bunch of fonts to avoid the missing font squares
 - Nautilus, Spectacle, the amazing GNOME Disks utility and GNOME Keyring
 - packagekit-qt5 to be able to update Arch directly from KDE Discover
-- htop and bpytop
 - dnscrypt-proxy to prevent your ISP from knowing where you're going
-- Syncthing to sync files between some devices
-- Java 8 and the latest Java release because of **Minecraft**
 - The ldns package for the `drill` command
 - The gvfs-mtp package so I can access the files of my Android phone
 - gocryptfs so the Vault feature of KDE Plasma is available
@@ -614,54 +595,7 @@ systemctl enable NetworkManager sddm apparmor cups avahi-daemon earlyoom bluetoo
 
 ## 5. On the now working setup
 
-### a. Flatpak
-Open a terminal, then install some Flatpak applications:
-```
-flatpak install -y com.bitwarden.desktop com.discordapp.Discord org.signal.Signal com.github.Eloston.UngoogledChromium com.github.micahflee.torbrowser-launcher com.github.tchx84.Flatseal com.spotify.Client org.audacityteam.Audacity org.filezillaproject.Filezilla org.gnome.baobab org.gimp.GIMP org.kde.krita org.libreoffice.LibreOffice org.gnome.Geary org.telegram.desktop org.videolan.VLC com.valvesoftware.Steam com.valvesoftware.Steam.CompatibilityTool.Proton com.valvesoftware.Steam.CompatibilityTool.Proton-GE com.obsproject.Studio org.remmina.Remmina org.mozilla.firefox org.qbittorrent.qBittorrent org.kde.kdenlive com.visualstudio.code-oss org.gtk.Gtk3theme.Adapta-Nokto-Eta org.gtk.Gtk3theme.Materia-dark-compact org.gnome.eog org.gnome.FileRoller io.github.peazip.PeaZip com.github.wwmm.easyeffects org.gnome.seahorse.Application
-```
-
-Here are the installed applications:
-- Bitwarden
-- Discord
-- Signal
-- ungoogled-chromium
-- Tor Browser launcher
-- Flatseal
-- Spotify
-- Audacity
-- FileZilla
-- Disk Usage Analyzer
-- GIMP
-- Krita
-- LibreOffice
-- Geary
-- Telegram
-- VLC
-- Steam
-- Steam Proton
-- Steam Proton-GE
-- OBS Studio
-- Remmina
-- Firefox
-- qBittorrent
-- Kdenlive
-- Code-OSS
-- The Adapta Nokto Eta theme
-- The Materia Dark Compact theme
-- Eyes of GNOME
-- File Roller
-- The PeaZip archive manager
-- EasyEffects
-- Seahorse
-
-You can find more instructions to properly setup some of these applications in their respective folders.
-
-(optional and only if Flatpak applications doesn't respect the applied GTK theme) let's make sure that the Flatpak applications will use the Materia-dark-compact theme:
-```
-$ echo "xsettingsd &" >> ~/.xinitrc
-```
-
-### b. USBGuard
+### a. USBGuard
 Generate the policy for the currently connected devices:
 ```
 usbguard generate-policy > /etc/usbguard/rules.conf
@@ -674,7 +608,7 @@ systemctl enable usbguard
 
 **Important:** you can consult the [Arch Linux Wiki](https://wiki.archlinux.org/index.php/USBGuard) for more instructions.
 
-### c. Firejail and AppArmor
+### b. Firejail and AppArmor
 Activate the Firejail profile for AppArmor:
 ```
 apparmor_parser -r /etc/apparmor.d/firejail-default
@@ -686,85 +620,19 @@ mkdir /etc/pacman.d/hooks
 wget -O /etc/pacman.d/hooks/firejail.hook https://raw.githubusercontent.com/theo546/my-arch-setup/master/firejail.hook
 ```
 
-### d. (optional) Set the keyboard layout for x11
+### c. (optional) Set the keyboard layout for x11
 For an AZERTY keyboard:
 ```
 localectl set-x11-keymap fr
 ```
 *Note:* you don't need to do this step if you're using a QWERTY keyboard.
 
-### e. (optional) Enable the numlock at boot for SDDM
-```
-echo -e "[General]\nNumlock=on" >> /etc/sddm.conf
-```
-
-### f. (optional) KDE Plasma customization
-There is two dark themes that I enjoy, [Breeze Transparent Dark](https://store.kde.org/p/1170816/) and [Breeze Darker Transparent Plasma Theme](https://store.kde.org/p/1303414/).  
-You can also use a customized version of the Breeze Darker Transparent theme that you can find inside the themes folder, simply drag 'n drop it in Appearance then Plasma Style.
-
-*Appearance*  
-Global Theme -> Breeze Dark  
-Plasma Style -> Breeze-Darker-Transparent  
-Application Style -> Application Style -> Configure GNOME/GTK Application Style -> GTK theme: Materia-dark-compact  
-Icons -> Papirus-Dark  
-Cursors -> DMZ (White)
-
-*Workspace*  
-Workspace Behavior -> General Behavior -> Click behavior: Single-click to open files and folders  
-Workspace Behavior -> Dekstop Effects -> Window Open/Close Animation: Glide  
-Workspace Behavior -> Dekstop Effects -> Appearance: Untick Maximize  
-Workspace Behavior -> Dekstop Effects -> Window Management: Untick Present Windows  
-Workspace Behavior -> Screen Locking -> Appearance: Configure... -> Positioning: Scaled, Keep Proportions  
-Workspace Behavior -> Screen Locking -> Appearance: Configure... -> Solid colour: #282828  
-(My wallpaper is the one in the wallpapers folder, it's the green Angel Dust.)  
-Startup and Shutdown -> Login Screen (SDDM) -> Breeze  
-Startup and Shutdown -> Desktop Session -> On Login: Start with an empty session  
-Startup and Shutdown -> Splash Screen -> None
-
-*Hardware* 
-Display and Monitor -> Night Color -> Tick Activate Night Color  
-Audio -> Applications -> Mute Notification Sounds  
-**(optional, to prevent games from blocking the compositor)**
-Display and Monitor -> Compositor -> Untick Allow applications to block compositing
-
-*Right click on desktop*  
-Configure Desktop and Wallpaper -> Background -> Positioning: Scaled, Keep Proportions  
-Configure Desktop and Wallpaper -> Background -> Solid colour: #282828  
-My wallpaper is the one in the wallpapers folder, it's the green Angel Dust.
-
-*Right click on the task bar*  
-Configure Icons-only Task Manager... -> Behavior -> Middle-clicking any task: Minimizes/Restores window or group
-
-*Click on the volume icon in the task bar*
-Tick Raise maximum volume
-
-*Right-click on the "Start" menu*  
-Show Alternatives... -> Select Application Menu  
-Configure Application Menu... -> Untick Recent Applications and Recent files, Expand search to bookmarks, files and emails
-
-(optional if the system is already in french) *Right-click on the date in the task bar*  
-Configure Digital Clock... -> Time display: 24-Hour
-Configure Digital Clock... -> Date format: Custom -> dd/MM/yyyy
-
-### g. (optional) Fix KDE Plasma refresh rate with a 144 Hz screen
-Open a terminal then type:
-```
-$ mkdir -p ~/.config/plasma-workspace/env && cd ~/.config/plasma-workspace/env
-$ echo -e '#!/bin/sh\nexport KWIN_X11_REFRESH_RATE=144000\nexport KWIN_X11_NO_SYNC_TO_VBLANK=1\nexport KWIN_X11_FORCE_SOFTWARE_VSYNC=1' > kwin_env.sh
-$ chmod +x kwin_env.sh
-$ kwriteconfig5 --file kwinrc --group Compositing --key MaxFPS 144
-$ kwriteconfig5 --file kwinrc --group Compositing --key RefreshRate 144
-```
-*Note:* you can set a custom refresh rate in `KWIN_X11_REFRESH_RATE` by multiplying your monitor refresh rate by a thousand.
-
-Then restart your Plasma session.
-
-### h. Make sure that the system is syncing to NTP servers
+### d. Make sure that the system is syncing to NTP servers
 ```
 timedatectl set-ntp true
 ```
 
-### i. (optional) Install libvirt
+### e. (optional) Install libvirt
 Open a terminal then type:
 ```
 pacman -S libvirt virt-manager ebtables ovmf swtpm
@@ -872,18 +740,18 @@ This step is **very** important as not adding a password may not protect you in 
 ### a. Backup your LUKS partition header
 Just in case, I highly recommand you to backup your LUKS header so in the case of a corruption, you will be able to use this header to access your encrypted files:
 ```
-cryptsetup luksHeaderBackup /dev/sda2 --header-backup-file luks_header_backup
+cryptsetup luksHeaderBackup /dev/nvme0n1p2 --header-backup-file luks_header_backup
 ```
 Save this file on a safe, offline and encrypted device.
 
 If you ever need to restore your LUKS header:
 ```
-cryptsetup luksHeaderRestore /dev/sda2 --header-backup-file luks_header_backup
+cryptsetup luksHeaderRestore /dev/nvme0n1p2 --header-backup-file luks_header_backup
 ```
 
 If you wish to open the encrypted partition without restoring the LUKS header:
 ```
-cryptsetup open --header luks_header_backup --allow-discards /dev/sda2 cryptlvm
+cryptsetup open --header luks_header_backup --allow-discards /dev/nvme0n1p2 cryptlvm
 ```
 *Note:* remove the `--allow-discards` option if you are not using an SSD or if you do not wish to use TRIM for "security reasons".
 
@@ -901,20 +769,9 @@ Add the `tpm_tis` module in the `/etc/mkinitcpio.conf` file:
 MODULES(... tpm_tis)
 ```
 
-Also add the `encrypt-tpm` hook in the hooks list, this one needs to be before the `encrypt` hook:
+Enroll tpm key:
 ```
-HOOKS(... encrypt-tpm encrypt ...)
-```
-
-Get the `encrypt-tpm` hook (this is to automate decryption on boot) and move it into the `/etc/initcpio/hooks/encrypt-tpm` directory:
-```
-wget -O /etc/initcpio/hooks/encrypt-tpm https://raw.githubusercontent.com/pawitp/arch-luks-tpm/6eda788de04b206697b5175a34e2fc969c5a6a66/hooks/encrypt-tpm
-sed -i 's/sha1/sha256/g' /etc/initcpio/hooks/encrypt-tpm
-```
-
-Same for the other `encrypt-tpm` file:
-```
-wget -O /etc/initcpio/install/encrypt-tpm https://raw.githubusercontent.com/pawitp/arch-luks-tpm/6eda788de04b206697b5175a34e2fc969c5a6a66/install/encrypt-tpm
+systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=0+7 /dev/nvme0n1p2
 ```
 
 Regenerate the initramfs and sign the EFI executable:
@@ -927,41 +784,9 @@ Restart your system:
 reboot
 ```
 
-Now generate a random key that we'll store in the `/root/tpm` directory:
-```
-mkdir /root/tpm && cd /root/tpm
-dd if=/dev/random of=secret.bin bs=32 count=1
-```
-
-Add the key to the LUKS header:
-```
-cryptsetup luksAddKey /dev/sda2 secret.bin
-```
-
-Then create a policy to only deliver the secret when the PCR 0, 2, 4 and 7 are validated:
-```
-tpm2_createpolicy --policy-pcr -l sha1:0,2,4,7 -L policy.digest
-tpm2_createprimary -C e -g sha1 -G rsa -c primary.context
-tpm2_create -g sha256 -u obj.pub -r obj.priv -C primary.context -L policy.digest -a "noda|adminwithpolicy|fixedparent|fixedtpm" -i secret.bin
-tpm2_load -C primary.context -u obj.pub -r obj.priv -c load.context
-tpm2_evictcontrol -C o -c load.context 0x81000000
-rm load.context obj.priv obj.pub policy.digest primary.context
-```
-
-Restart your system once again:
-```
-reboot
-```
-
 And as you may have noticed, your system didn't ask you for a password, if it did, you may have done something wrong.
 
 After a kernel update, you will notice that the system doesn't automatically unlock the partition, that is because some PCRs are now unvalidated as the hash of the EFI executable has changed.
-
-You will need to remove the secret that is stored in the TPM before trying to add it back:
-```
-tpm2_evictcontrol -C o -c 0x81000000
-```
-Now repeat the commands above to make the system automatically unlock again.
 
 ___
 
